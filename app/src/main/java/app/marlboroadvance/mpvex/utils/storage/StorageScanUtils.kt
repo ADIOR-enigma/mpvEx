@@ -36,7 +36,6 @@ object StorageScanUtils {
       "mpeg",
       "m2v",
       "ogv",
-      "ts",
       "mts",
       "m2ts",
       "vob",
@@ -254,6 +253,13 @@ object StorageScanUtils {
   fun isAudioFile(file: File): Boolean {
     val extension = file.extension.lowercase(Locale.getDefault())
     return AUDIO_EXTENSIONS.contains(extension)
+  }
+
+  /**
+   * Checks if a file is a supported media file (video or audio)
+   */
+  fun isSupportedMediaFile(file: File): Boolean {
+    return isVideoFile(file) || isAudioFile(file)
   }
 
   /**
@@ -515,7 +521,15 @@ object StorageScanUtils {
       "m4v" -> "video/x-m4v"
       "3gp" -> "video/3gpp"
       "mpg", "mpeg" -> "video/mpeg"
-      else -> "video/*"
+      "mp3" -> "audio/mpeg"
+      "m4a" -> "audio/mp4"
+      "aac" -> "audio/aac"
+      "ogg", "oga" -> "audio/ogg"
+      "opus" -> "audio/opus"
+      "flac" -> "audio/flac"
+      "wav" -> "audio/wav"
+      "wma" -> "audio/x-ms-wma"
+      else -> if (AUDIO_EXTENSIONS.contains(extension.lowercase())) "audio/*" else "video/*"
     }
 
   /**

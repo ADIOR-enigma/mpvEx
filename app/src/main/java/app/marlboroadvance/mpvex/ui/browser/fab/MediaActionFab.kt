@@ -4,11 +4,12 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddLink
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FloatingActionButtonMenu
 import androidx.compose.material3.FloatingActionButtonMenuItem
@@ -30,18 +31,11 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.isShiftPressed
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.isTraversalGroup
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.traversalIndex
 import androidx.compose.ui.unit.dp
 
@@ -67,6 +61,8 @@ fun MediaActionFab(
   onOpenFile: () -> Unit,
   onPlayRecentlyPlayed: () -> Unit,
   onPlayLink: () -> Unit,
+  onCreatePlaylist: (() -> Unit)? = null,
+  onAddM3UPlaylist: (() -> Unit)? = null,
   expanded: Boolean,
   onExpandedChange: (Boolean) -> Unit,
   modifier: Modifier = Modifier,
@@ -91,7 +87,7 @@ fun MediaActionFab(
 
   // Build menu items based on state
   val menuItems =
-    remember(hasRecentlyPlayed, enableRecentlyPlayed) {
+    remember(hasRecentlyPlayed, enableRecentlyPlayed, onCreatePlaylist, onAddM3UPlaylist) {
       buildList {
         add(MediaActionItem(Icons.Filled.FolderOpen, "Open File", onClick = onOpenFile))
         add(
@@ -103,6 +99,13 @@ fun MediaActionFab(
           ),
         )
         add(MediaActionItem(Icons.Filled.AddLink, "Play Link", onClick = onPlayLink))
+        
+        if (onCreatePlaylist != null) {
+          add(MediaActionItem(Icons.AutoMirrored.Filled.PlaylistAdd, "Create Playlist", onClick = onCreatePlaylist))
+        }
+        if (onAddM3UPlaylist != null) {
+          add(MediaActionItem(Icons.Filled.AddLink, "Add M3U Playlist", onClick = onAddM3UPlaylist))
+        }
       }
     }
 
@@ -132,24 +135,7 @@ fun MediaActionFab(
                 },
               )
             }
-          }
-          .then(
-            if (index == 0) {
-              // First item can navigate back to FAB button
-              Modifier.onKeyEvent { event ->
-                if (event.type == KeyEventType.KeyDown &&
-                  (event.key == Key.DirectionUp || (event.isShiftPressed && event.key == Key.Tab))
-                ) {
-                  focusRequester.requestFocus()
-                  true
-                } else {
-                  false
-                }
-              }
-            } else {
-              Modifier
-            },
-          ),
+          },
         onClick = {
           if (item.enabled) {
             onExpandedChange(false)
@@ -189,7 +175,6 @@ private fun ToggleFabButton(
     modifier = Modifier
       .semantics {
         traversalIndex = -1f
-        stateDescription = if (expanded) "Expanded" else "Collapsed"
         contentDescription = "Toggle menu"
       }
       .animateFloatingActionButton(
@@ -203,7 +188,7 @@ private fun ToggleFabButton(
   ) {
     val icon by remember {
       derivedStateOf {
-        if (checkedProgress > 0.5f) Icons.Filled.Close else Icons.Filled.PlayArrow
+        if (checkedProgress > 0.5f) Icons.Filled.Close else Icons.Filled.Add
       }
     }
     Icon(

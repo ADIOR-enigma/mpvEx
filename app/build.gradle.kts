@@ -30,6 +30,16 @@ android {
     buildConfigField("String", "GIT_SHA", "\"${getCommitSha()}\"")
     buildConfigField("int", "GIT_COUNT", getCommitCount())
   }
+
+  signingConfigs {
+    create("release") {
+      storeFile = file(project.findProperty("KEYSTORE_FILE") ?: "release.keystore")
+      storePassword = project.findProperty("KEYSTORE_PASSWORD") as String?
+      keyAlias = project.findProperty("KEY_ALIAS") as String?
+      keyPassword = project.findProperty("KEY_PASSWORD") as String?
+    }
+  }
+
   dependenciesInfo {
     includeInApk = false
     includeInBundle = false
@@ -51,6 +61,7 @@ android {
          getDefaultProguardFile("proguard-android-optimize.txt"),
         "proguard-rules.pro",
       )
+      signingConfig = signingConfigs.getByName("release")
       ndk {
         debugSymbolLevel = "none" // or 'minimal' if needed for crash reports
       }

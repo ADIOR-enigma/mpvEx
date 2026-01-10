@@ -5,12 +5,15 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import app.marlboroadvance.mpvex.database.repository.VideoMetadataCacheRepository
+import app.marlboroadvance.mpvex.database.entities.PlaylistEntity
+import app.marlboroadvance.mpvex.database.repository.PlaylistRepository
+import app.marlboroadvance.mpvex.domain.media.model.Video
 import app.marlboroadvance.mpvex.domain.media.model.VideoFolder
 import app.marlboroadvance.mpvex.domain.playbackstate.repository.PlaybackStateRepository
 import app.marlboroadvance.mpvex.preferences.AppearancePreferences
 import app.marlboroadvance.mpvex.preferences.FoldersPreferences
 import app.marlboroadvance.mpvex.ui.browser.base.BaseBrowserViewModel
+import app.marlboroadvance.mpvex.ui.browser.playlist.PlaylistWithCount
 import app.marlboroadvance.mpvex.utils.media.MediaLibraryEvents
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,6 +24,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
+import java.io.File
 
 data class FolderWithNewCount(
   val folder: VideoFolder,
@@ -34,27 +38,27 @@ class FolderListViewModel(
   private val foldersPreferences: FoldersPreferences by inject()
   private val appearancePreferences: AppearancePreferences by inject()
   private val playbackStateRepository: PlaybackStateRepository by inject()
+  private val playlistRepository: PlaylistRepository by inject()
 
   private val _allVideoFolders = MutableStateFlow<List<VideoFolder>>(emptyList())
   private val _videoFolders = MutableStateFlow<List<VideoFolder>>(emptyList())
   val videoFolders: StateFlow<List<VideoFolder>> = _videoFolders.asStateFlow()
 
+  private val _userPlaylists = MutableStateFlow<List<PlaylistWithCount>>(emptyList())
+  val userPlaylists: StateFlow<List<PlaylistWithCount>> = _userPlaylists.asStateFlow()
+
   private val _foldersWithNewCount = MutableStateFlow<List<FolderWithNewCount>>(emptyList())
   val foldersWithNewCount: StateFlow<List<FolderWithNewCount>> = _foldersWithNewCount.asStateFlow()
 
-  // Only show loading on fresh install (when there's no cached data)
   private val _isLoading = MutableStateFlow(false)
   val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
-  // Track if initial load has completed to prevent empty state flicker
   private val _hasCompletedInitialLoad = MutableStateFlow(false)
   val hasCompletedInitialLoad: StateFlow<Boolean> = _hasCompletedInitialLoad.asStateFlow()
 
-  // Track if folders were deleted leaving list empty
   private val _foldersWereDeleted = MutableStateFlow(false)
   val foldersWereDeleted: StateFlow<Boolean> = _foldersWereDeleted.asStateFlow()
 
-  // Track previous folder count to detect if all folders were deleted
   private var previousFolderCount = 0
 
   companion object {
@@ -68,89 +72,90 @@ class FolderListViewModel(
   }
 
   init {
-    // Load cached folders instantly for immediate display
-    val hasCachedData = loadCachedFolders()
+    loadCachedFolders()
+    loadVideoFolders()
+    observeUserPlaylists()
 
-    // If no cached data (first launch), scan immediately. Otherwise defer to not slow down app launch
-    if (!hasCachedData) {
-      loadVideoFolders()
-    } else {
-      viewModelScope.launch(Dispatchers.IO) {
-        kotlinx.coroutines.delay(2000) // Wait 2 seconds before refreshing
-        loadVideoFolders()
-      }
-    }
-
-    // Refresh folders on global media library changes
     viewModelScope.launch(Dispatchers.IO) {
       MediaLibraryEvents.changes.collectLatest {
-        // Clear cache when media library changes
         app.marlboroadvance.mpvex.repository.MediaFileRepository.clearCache()
         loadVideoFolders()
       }
     }
 
-    // Filter folders based on blacklist
     viewModelScope.launch {
       combine(_allVideoFolders, foldersPreferences.blacklistedFolders.changes()) { folders, blacklist ->
         folders.filter { folder -> folder.path !in blacklist }
       }.collectLatest { filteredFolders ->
-        // Check if folders became empty after having folders
         if (previousFolderCount > 0 && filteredFolders.isEmpty()) {
           _foldersWereDeleted.value = true
-          Log.d(TAG, "Folders became empty (had $previousFolderCount folders before)")
         } else if (filteredFolders.isNotEmpty()) {
-          // Reset flag if folders now exist
           _foldersWereDeleted.value = false
         }
-
-        // Update previous count
         previousFolderCount = filteredFolders.size
-
         _videoFolders.value = filteredFolders
-        // Calculate new video counts for each folder
         calculateNewVideoCounts(filteredFolders)
-
-        // Save to cache for next app launch (save unfiltered list)
         saveFoldersToCache(_allVideoFolders.value)
       }
     }
   }
 
-  private fun loadCachedFolders(): Boolean {
-    var hasCachedData = false
-    val prefs =
-      getApplication<Application>().getSharedPreferences("folder_cache", android.content.Context.MODE_PRIVATE)
-    val cachedJson = prefs.getString("folders", null)
+  private fun observeUserPlaylists() {
+    viewModelScope.launch(Dispatchers.IO) {
+      playlistRepository.observeAllPlaylists().collectLatest { playlistsFromDb ->
+        val sortedPlaylists = playlistsFromDb.sortedBy { it.name.lowercase() }
+        val playlistsWithCounts = sortedPlaylists.map { playlist ->
+          val count = getActualVideoCount(playlist.id)
+          PlaylistWithCount(playlist, count)
+        }
+        _userPlaylists.value = playlistsWithCounts
+      }
+    }
+  }
 
+  private suspend fun getActualVideoCount(playlistId: Int): Int {
+    val playlist = playlistRepository.getPlaylistById(playlistId)
+    val items = playlistRepository.getPlaylistItems(playlistId)
+    if (items.isEmpty()) return 0
+    if (playlist?.isM3uPlaylist == true) return items.size
+    
+    val bucketIds = items.map { item ->
+      File(item.filePath).parent ?: ""
+    }.toSet()
+    val allVideos = app.marlboroadvance.mpvex.repository.MediaFileRepository.getVideosForBuckets(getApplication(), bucketIds)
+    return items.count { item ->
+      allVideos.any { video -> video.path == item.filePath }
+    }
+  }
+
+  fun deleteUserPlaylist(playlist: PlaylistEntity) {
+    viewModelScope.launch(Dispatchers.IO) {
+      playlistRepository.deletePlaylist(playlist)
+    }
+  }
+
+  private fun loadCachedFolders() {
+    val prefs = getApplication<Application>().getSharedPreferences("folder_cache", android.content.Context.MODE_PRIVATE)
+    val cachedJson = prefs.getString("folders", null)
     if (cachedJson != null) {
       try {
-        // Parse JSON and restore folders
         val folders = parseFoldersFromJson(cachedJson)
         if (folders.isNotEmpty()) {
-          Log.d(TAG, "Loaded ${folders.size} folders from cache instantly")
-          hasCachedData = true
-          viewModelScope.launch(Dispatchers.IO) {
-            _allVideoFolders.value = folders
-            _hasCompletedInitialLoad.value = true
-          }
+          _allVideoFolders.value = folders
+          _hasCompletedInitialLoad.value = true
         }
       } catch (e: Exception) {
         Log.e(TAG, "Error loading cached folders", e)
       }
     }
-
-    return hasCachedData
   }
 
   private fun saveFoldersToCache(folders: List<VideoFolder>) {
     viewModelScope.launch(Dispatchers.IO) {
       try {
-        val prefs =
-          getApplication<Application>().getSharedPreferences("folder_cache", android.content.Context.MODE_PRIVATE)
+        val prefs = getApplication<Application>().getSharedPreferences("folder_cache", android.content.Context.MODE_PRIVATE)
         val json = serializeFoldersToJson(folders)
         prefs.edit().putString("folders", json).apply()
-        Log.d(TAG, "Saved ${folders.size} folders to cache")
       } catch (e: Exception) {
         Log.e(TAG, "Error saving folders to cache", e)
       }
@@ -158,7 +163,6 @@ class FolderListViewModel(
   }
 
   private fun serializeFoldersToJson(folders: List<VideoFolder>): String {
-    // Simple JSON serialization
     return folders.joinToString(separator = "|") { folder ->
       "${folder.bucketId}::${folder.name}::${folder.path}::${folder.videoCount}::${folder.totalSize}::${folder.totalDuration}::${folder.lastModified}"
     }
@@ -181,7 +185,6 @@ class FolderListViewModel(
         } else null
       }
     } catch (e: Exception) {
-      Log.e(TAG, "Error parsing cached folders", e)
       emptyList()
     }
   }
@@ -191,94 +194,57 @@ class FolderListViewModel(
       try {
         val showLabel = appearancePreferences.showUnplayedOldVideoLabel.get()
         if (!showLabel) {
-          // If feature is disabled, just return folders with 0 count
           _foldersWithNewCount.value = folders.map { FolderWithNewCount(it, 0) }
           return@launch
         }
-
         val thresholdDays = appearancePreferences.unplayedOldVideoDays.get()
         val thresholdMillis = thresholdDays * 24 * 60 * 60 * 1000L
         val currentTime = System.currentTimeMillis()
-
         val foldersWithCounts = folders.map { folder ->
           try {
-            // Get all videos in this folder
-            val videos = app.marlboroadvance.mpvex.repository.MediaFileRepository
-              .getVideosInFolder(getApplication(), folder.bucketId)
-
-            // Count new unplayed videos
+            val videos = app.marlboroadvance.mpvex.repository.MediaFileRepository.getVideosInFolder(getApplication(), folder.bucketId)
             val newCount = videos.count { video ->
-              // Check if video was added within threshold days
               val videoAge = currentTime - (video.dateAdded * 1000)
               val isRecent = videoAge <= thresholdMillis
-
-              // Check if video has been played
-              // A video is considered "played" if it has any playback state
               val playbackState = playbackStateRepository.getVideoDataByTitle(video.displayName)
-              val isUnplayed = playbackState == null
-
-              isRecent && isUnplayed
+              isRecent && playbackState == null
             }
-
             FolderWithNewCount(folder, newCount)
           } catch (e: Exception) {
-            Log.e(TAG, "Error counting new videos for folder ${folder.name}", e)
             FolderWithNewCount(folder, 0)
           }
         }
-
         _foldersWithNewCount.value = foldersWithCounts
       } catch (e: Exception) {
-        Log.e(TAG, "Error calculating new video counts", e)
         _foldersWithNewCount.value = folders.map { FolderWithNewCount(it, 0) }
       }
     }
   }
 
   override fun refresh() {
-    // Clear cache to force fresh data
     app.marlboroadvance.mpvex.repository.MediaFileRepository.clearCache()
     loadVideoFolders()
   }
 
-  /**
-   * Recalculate new video counts without refreshing the entire folder list
-   * Useful when returning to the screen after playing videos
-   */
   fun recalculateNewVideoCounts() {
     calculateNewVideoCounts(_videoFolders.value)
   }
 
-  /**
-   * Scans the filesystem recursively to find all folders containing videos.
-   * Uses optimized parallel scanning with complete metadata (including duration)
-   * to provide fast, non-flickering results.
-   */
   private fun loadVideoFolders() {
     viewModelScope.launch(Dispatchers.IO) {
       try {
-        // Show loading state if no folders yet
         if (_allVideoFolders.value.isEmpty()) {
           _isLoading.value = true
         }
-
         val showHiddenFiles = appearancePreferences.showHiddenFiles.get()
-
-        // Use optimized scan with complete metadata (no flickering)
-        // Fast parallel scanning + batch duration extraction = 5-10x faster than old method
         val videoFolders = app.marlboroadvance.mpvex.repository.MediaFileRepository
           .getAllVideoFolders(
             context = getApplication(),
             showHiddenFiles = showHiddenFiles,
           )
-
-        Log.d(TAG, "Scan completed: found ${videoFolders.size} folders with complete metadata")
         _allVideoFolders.value = videoFolders
-
-        // Mark as completed after folders are set
         _hasCompletedInitialLoad.value = true
       } catch (e: Exception) {
-        Log.e(TAG, "Error loading video folders", e)
         _allVideoFolders.value = emptyList()
         _hasCompletedInitialLoad.value = true
       } finally {
@@ -287,5 +253,9 @@ class FolderListViewModel(
     }
   }
 
-
+  override suspend fun deleteVideos(videos: List<Video>): Pair<Int, Int> {
+    val result = super.deleteVideos(videos)
+    refresh()
+    return result
+  }
 }

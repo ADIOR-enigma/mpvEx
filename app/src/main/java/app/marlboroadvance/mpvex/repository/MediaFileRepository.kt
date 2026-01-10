@@ -25,9 +25,9 @@ import kotlin.math.pow
  * Consolidates FileSystemRepository, VideoRepository functionality
  *
  * This repository handles:
- * - Video folder discovery (album view)
+ * - Media folder discovery (album view)
  * - File system browsing (tree view)
- * - Video file listing
+ * - Media file listing (video and audio)
  * - Metadata extraction
  * - Path operations
  * - Storage volume detection
@@ -64,7 +64,7 @@ object MediaFileRepository : KoinComponent {
   // =============================================================================
 
   /**
-   * Scans all storage volumes to find all folders containing videos
+   * Scans all storage volumes to find all folders containing media
    * Used by FolderListViewModel for album view
    *
    * LEGACY VERSION: Maintains backward compatibility with metadata extraction
@@ -80,7 +80,7 @@ object MediaFileRepository : KoinComponent {
       // Check cache first
       videoFoldersCache[cacheKey]?.let { (cached, timestamp) ->
         if (System.currentTimeMillis() - timestamp < CACHE_VALIDITY_MS) {
-          Log.d(TAG, "Returning cached video folders (${cached.size} folders)")
+          Log.d(TAG, "Returning cached media folders (${cached.size} folders)")
           return@withContext cached
         }
       }
@@ -98,14 +98,14 @@ object MediaFileRepository : KoinComponent {
 
         result
       } catch (e: Exception) {
-        Log.e(TAG, "Error scanning for video folders", e)
+        Log.e(TAG, "Error scanning for media folders", e)
         // Return cached data even if expired on error
         videoFoldersCache[cacheKey]?.first ?: emptyList()
       }
     }
 
   /**
-   * OPTIMIZED: Ultra-fast scan for video folders with parallel processing
+   * OPTIMIZED: Ultra-fast scan for media folders with parallel processing
    * Returns folders immediately with basic info (count, size)
    * Duration will be 0 initially - call enrichVideoFolders() to populate
    *
@@ -130,7 +130,7 @@ object MediaFileRepository : KoinComponent {
         )
         FolderScanUtils.convertToVideoFolders(folders)
       } catch (e: Exception) {
-        Log.e(TAG, "Error fast scanning for video folders", e)
+        Log.e(TAG, "Error fast scanning for media folders", e)
         emptyList()
       }
     }
@@ -174,7 +174,7 @@ object MediaFileRepository : KoinComponent {
         // Convert back to VideoFolder list
         FolderScanUtils.convertToVideoFolders(enrichedMap)
       } catch (e: Exception) {
-        Log.e(TAG, "Error enriching video folders", e)
+        Log.e(TAG, "Error enriching media folders", e)
         folders // Return original on error
       }
     }
@@ -184,7 +184,7 @@ object MediaFileRepository : KoinComponent {
   // =============================================================================
 
   /**
-   * Gets all videos in a specific folder
+   * Gets all media files in a specific folder
    * OPTIMIZED: Uses batch metadata extraction for faster loading
    * @param bucketId Can be either a path or a bucket ID (path hash)
    */
@@ -196,7 +196,7 @@ object MediaFileRepository : KoinComponent {
       // Check cache first
       videosCache[bucketId]?.let { (cached, timestamp) ->
         if (System.currentTimeMillis() - timestamp < CACHE_VALIDITY_MS) {
-          Log.d(TAG, "Returning cached videos for bucket $bucketId (${cached.size} videos)")
+          Log.d(TAG, "Returning cached media for bucket $bucketId (${cached.size} items)")
           return@withContext cached
         }
       }
@@ -209,7 +209,7 @@ object MediaFileRepository : KoinComponent {
           bucketId // Treat as path for now
         }
 
-        // Scan the directory for video files
+        // Scan the directory for media files
         val directory = File(folderPath)
         if (!directory.exists() || !directory.isDirectory || !directory.canRead()) {
           Log.w(TAG, "Cannot access directory: $folderPath")
@@ -217,34 +217,34 @@ object MediaFileRepository : KoinComponent {
           return@withContext videosCache[bucketId]?.first ?: emptyList()
         }
 
-        val videoFiles = directory.listFiles()?.filter {
-          it.isFile && StorageScanUtils.isVideoFile(it)
+        val mediaFiles = directory.listFiles()?.filter {
+          it.isFile && StorageScanUtils.isSupportedMediaFile(it)
         } ?: emptyList()
 
-        Log.d(TAG, "Found ${videoFiles.size} videos in $folderPath")
+        Log.d(TAG, "Found ${mediaFiles.size} media items in $folderPath")
 
-        // Batch extract metadata for all videos
-        val fileTriples = videoFiles.map { file ->
+        // Batch extract metadata for all media
+        val fileTriples = mediaFiles.map { file ->
           Triple(file, Uri.fromFile(file), file.name)
         }
 
         val metadataMap = metadataCache.getOrExtractMetadataBatch(fileTriples)
 
-        // Create video objects with metadata
-        val videos = videoFiles.mapNotNull { videoFile ->
+        // Create media objects with metadata
+        val videos = mediaFiles.mapNotNull { mediaFile ->
           try {
-            if (videoFile.exists()) {
+            if (mediaFile.exists()) {
               createVideoFromFileWithMetadata(
-                videoFile,
+                mediaFile,
                 folderPath,
                 directory.name,
-                metadataMap[videoFile.absolutePath],
+                metadataMap[mediaFile.absolutePath],
               )
             } else {
               null
             }
           } catch (e: Exception) {
-            Log.w(TAG, "Error processing video file: ${videoFile.absolutePath}", e)
+            Log.w(TAG, "Error processing media file: ${mediaFile.absolutePath}", e)
             null
           }
         }
@@ -256,14 +256,14 @@ object MediaFileRepository : KoinComponent {
 
         result
       } catch (e: Exception) {
-        Log.e(TAG, "Error getting videos for bucket $bucketId", e)
+        Log.e(TAG, "Error getting media for bucket $bucketId", e)
         // Return cached data even if expired on error
         return@withContext videosCache[bucketId]?.first ?: emptyList()
       }
     }
 
   /**
-   * Gets videos from multiple folders
+   * Gets media from multiple folders
    */
   suspend fun getVideosForBuckets(
     context: Context,
@@ -290,7 +290,7 @@ object MediaFileRepository : KoinComponent {
           val folderName = file.parentFile?.name ?: ""
           createVideoFromFile(file, folderPath, folderName)
         } catch (e: Exception) {
-          Log.w(TAG, "Error creating video from file: ${file.absolutePath}", e)
+          Log.w(TAG, "Error creating media from file: ${file.absolutePath}", e)
           null
         }
       }
@@ -447,8 +447,8 @@ object MediaFileRepository : KoinComponent {
   }
 
   /**
-   * Scans a directory and returns its contents (folders and video files)
-   * @param showAllFileTypes If true, shows all files. If false, shows only videos.
+   * Scans a directory and returns its contents (folders and media files)
+   * @param showAllFileTypes If true, shows all files. If false, shows only media.
    * @param showHiddenFiles If true, shows hidden files and folders. If false, hides them.
    * @param useFastCount If true, uses fast shallow counting (immediate children only). If false, uses deep recursive counting.
    */
@@ -513,7 +513,7 @@ object MediaFileRepository : KoinComponent {
         val targetFiles = if (showAllFileTypes) {
           files.filter { it.isFile }
         } else {
-          files.filter { it.isFile && StorageScanUtils.isVideoFile(it) }
+          files.filter { it.isFile && StorageScanUtils.isSupportedMediaFile(it) }
         }
 
         val videos = getVideosFromFiles(targetFiles)
@@ -531,7 +531,7 @@ object MediaFileRepository : KoinComponent {
 
         Log.d(
           TAG,
-          "Scanned directory: $path, found ${items.size} items (${items.filterIsInstance<FileSystemItem.Folder>().size} folders, ${items.filterIsInstance<FileSystemItem.VideoFile>().size} videos) [fastCount=$useFastCount]",
+          "Scanned directory: $path, found ${items.size} items (${items.filterIsInstance<FileSystemItem.Folder>().size} folders, ${items.filterIsInstance<FileSystemItem.VideoFile>().size} media files) [fastCount=$useFastCount]",
         )
         Result.success(items)
       } catch (e: SecurityException) {

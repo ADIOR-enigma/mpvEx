@@ -16,7 +16,7 @@ import java.io.File
 import java.util.Locale
 
 /**
- * Unified utility for scanning folders and analyzing video content
+ * Unified utility for scanning folders and analyzing media content (video and audio)
  * Consolidates logic from FolderListViewModel, FileSystemRepository, and FoldersPreferencesScreen
  */
 object FolderScanUtils {
@@ -64,7 +64,7 @@ object FolderScanUtils {
   }
 
   /**
-   * Scans all storage volumes recursively to find all folders containing videos
+   * Scans all storage volumes recursively to find all folders containing media
    * This is the main unified scanning function
    *
    * OPTIMIZED: Now uses fast parallel scanning + enrichment for better performance
@@ -72,7 +72,7 @@ object FolderScanUtils {
    *
    * @param context Application context
    * @param showHiddenFiles Whether to show hidden files/folders
-   * @param metadataCache Cache for video metadata
+   * @param metadataCache Cache for media metadata
    * @param maxDepth Maximum recursion depth (default 20)
    * @return Map of folder paths to FolderData with duration information
    */
@@ -84,9 +84,9 @@ object FolderScanUtils {
   ): Map<String, FolderData> = coroutineScope {
     val startTime = System.currentTimeMillis()
 
-    Log.d(TAG, "Scanning storage volumes for video folders (with metadata)")
+    Log.d(TAG, "Scanning storage volumes for media folders (with metadata)")
 
-    // Phase 1: Fast parallel scan to find all folders with videos
+    // Phase 1: Fast parallel scan to find all folders with media
     val basicFolders = scanAllStorageForVideoFoldersOptimized(
       context = context,
       showHiddenFiles = showHiddenFiles,
@@ -112,7 +112,7 @@ object FolderScanUtils {
 
   /**
    * HIGH-PERFORMANCE: Ultra-fast scan with optimized parallel processing
-   * Scans all storage volumes to find folders containing videos using:
+   * Scans all storage volumes to find folders containing media using:
    * - Parallel directory tree traversal with work-stealing
    * - Batch processing for better CPU cache utilization
    * - Lock-free concurrent collections for thread safety
@@ -138,7 +138,7 @@ object FolderScanUtils {
     // Use ConcurrentHashMap for thread-safe concurrent access without locks
     val folders = java.util.concurrent.ConcurrentHashMap<String, FolderData>()
 
-    Log.d(TAG, "Optimized scanning ${storageRoots.size} storage volumes for video folders")
+    Log.d(TAG, "Optimized scanning ${storageRoots.size} storage volumes for media folders")
 
     // Process each storage root in parallel
     storageRoots.map { root ->
@@ -181,7 +181,7 @@ object FolderScanUtils {
       val files = directory.listFiles() ?: return@coroutineScope
 
       // Pre-allocate with estimated capacity for better performance
-      val videoFiles = ArrayList<File>(files.size / 10) // Estimate 10% are videos
+      val mediaFiles = ArrayList<File>(files.size / 10) // Estimate 10% are media
       val subdirectories = ArrayList<File>(files.size / 5) // Estimate 20% are directories
 
       // Single-pass categorization - most efficient approach
@@ -198,11 +198,10 @@ object FolderScanUtils {
               }
             }
 
-            // Video file checks - inline extension check for speed
+            // Media file checks - inline extension check for speed
             file.isFile -> {
-              val extension = file.extension.lowercase(Locale.getDefault())
-              if (StorageScanUtils.VIDEO_EXTENSIONS.contains(extension)) {
-                videoFiles.add(file)
+              if (StorageScanUtils.isSupportedMediaFile(file)) {
+                mediaFiles.add(file)
               }
             }
           }
@@ -212,16 +211,16 @@ object FolderScanUtils {
         }
       }
 
-      // If this directory contains videos, record it
-      if (videoFiles.isNotEmpty()) {
+      // If this directory contains media, record it
+      if (mediaFiles.isNotEmpty()) {
         val folderPath = directory.absolutePath
 
         // Compute aggregates efficiently
         var totalSize = 0L
         var lastModified = 0L
-        for (video in videoFiles) {
-          totalSize += video.length()
-          val modified = video.lastModified()
+        for (media in mediaFiles) {
+          totalSize += media.length()
+          val modified = media.lastModified()
           if (modified > lastModified) {
             lastModified = modified
           }
@@ -230,7 +229,7 @@ object FolderScanUtils {
         folders[folderPath] = FolderData(
           path = folderPath,
           name = directory.name,
-          videoCount = videoFiles.size,
+          videoCount = mediaFiles.size, // Named videoCount but includes audio
           totalSize = totalSize,
           totalDuration = 0L, // Skip duration extraction for speed
           lastModified = lastModified / 1000,
@@ -295,7 +294,7 @@ object FolderScanUtils {
    *
    * @param context Application context
    * @param folders Map of folders to enrich (from fast scan)
-   * @param metadataCache Cache for video metadata
+   * @param metadataCache Cache for media metadata
    * @param onProgress Callback for progress updates (processed count, total count)
    * @return Updated map with duration information
    */
@@ -348,15 +347,15 @@ object FolderScanUtils {
     val directory = File(folderData.path)
     if (!directory.exists() || !directory.isDirectory) return folderData
 
-    val videoFiles = directory.listFiles()?.filter {
-      it.isFile && StorageScanUtils.isVideoFile(it)
+    val mediaFiles = directory.listFiles()?.filter {
+      it.isFile && StorageScanUtils.isSupportedMediaFile(it)
     } ?: return folderData
 
-    if (videoFiles.isEmpty()) return folderData
+    if (mediaFiles.isEmpty()) return folderData
 
-    // Batch process all videos in this folder
-    val fileTriples = videoFiles.map { videoFile ->
-      Triple(videoFile, Uri.fromFile(videoFile), videoFile.name)
+    // Batch process all media in this folder
+    val fileTriples = mediaFiles.map { mediaFile ->
+      Triple(mediaFile, Uri.fromFile(mediaFile), mediaFile.name)
     }
 
     val metadataMap = metadataCache.getOrExtractMetadataBatch(fileTriples)
@@ -365,107 +364,6 @@ object FolderScanUtils {
     val totalDuration = metadataMap.values.sumOf { it.durationMs }
 
     return folderData.copy(totalDuration = totalDuration)
-  }
-
-  /**
-   * Recursively scans a directory for folders containing videos
-   * Only adds folders that directly contain video files
-   *
-   * @param directory Directory to scan
-   * @param folders Output map to populate
-   * @param showHiddenFiles Whether to show hidden files/folders
-   * @param metadataCache Cache for extracting video metadata
-   * @param maxDepth Maximum recursion depth
-   * @param currentDepth Current recursion depth
-   */
-  suspend fun scanDirectoryRecursively(
-    directory: File,
-    folders: MutableMap<String, FolderData>,
-    showHiddenFiles: Boolean,
-    metadataCache: VideoMetadataCacheRepository,
-    maxDepth: Int = 20,
-    currentDepth: Int = 0,
-  ) {
-    if (currentDepth >= maxDepth) return
-    if (!directory.exists() || !directory.canRead() || !directory.isDirectory) return
-
-    try {
-      val files = directory.listFiles() ?: return
-
-      // Separate files into videos and subdirectories
-      val videoFiles = mutableListOf<File>()
-      val subdirectories = mutableListOf<File>()
-
-      for (file in files) {
-        when {
-          // Skip hidden files/folders if needed
-          !showHiddenFiles && file.name.startsWith(".") -> continue
-
-          // Skip system folders and folders with .nomedia
-          file.isDirectory && StorageScanUtils.shouldSkipFolder(file, showHiddenFiles) -> continue
-
-          // Collect video files
-          file.isFile && StorageScanUtils.isVideoFile(file) -> {
-            videoFiles.add(file)
-          }
-
-          // Collect subdirectories
-          file.isDirectory -> {
-            subdirectories.add(file)
-          }
-        }
-      }
-
-      // If this directory contains videos, add it to the list
-      if (videoFiles.isNotEmpty()) {
-        val folderPath = directory.absolutePath
-        val folderName = directory.name
-        val totalSize = videoFiles.sumOf { it.length() }
-        val lastModified = videoFiles.maxOfOrNull { it.lastModified() }?.div(1000) ?: 0L
-
-        // Calculate total duration by loading video metadata
-        var totalDuration = 0L
-        for (videoFile in videoFiles) {
-          try {
-            val uri = Uri.fromFile(videoFile)
-            val metadata = metadataCache.getOrExtractMetadata(videoFile, uri, videoFile.name)
-            if (metadata != null && metadata.durationMs > 0) {
-              totalDuration += metadata.durationMs
-            }
-          } catch (e: Exception) {
-            Log.w(TAG, "Failed to extract duration for ${videoFile.name}", e)
-          }
-        }
-
-        folders[folderPath] = FolderData(
-          path = folderPath,
-          name = folderName,
-          videoCount = videoFiles.size,
-          totalSize = totalSize,
-          totalDuration = totalDuration,
-          lastModified = lastModified,
-          hasSubfolders = subdirectories.isNotEmpty(),
-        )
-
-        Log.d(TAG, "Found folder with videos: $folderPath (${videoFiles.size} videos)")
-      }
-
-      // Recursively scan subdirectories
-      for (subdir in subdirectories) {
-        scanDirectoryRecursively(
-          directory = subdir,
-          folders = folders,
-          showHiddenFiles = showHiddenFiles,
-          metadataCache = metadataCache,
-          maxDepth = maxDepth,
-          currentDepth = currentDepth + 1,
-        )
-      }
-    } catch (e: SecurityException) {
-      Log.w(TAG, "Permission denied scanning: ${directory.absolutePath}", e)
-    } catch (e: Exception) {
-      Log.w(TAG, "Error scanning directory: ${directory.absolutePath}", e)
-    }
   }
 
   /**
@@ -491,7 +389,7 @@ object FolderScanUtils {
    *
    * @param folder Folder to analyze
    * @param showHiddenFiles Whether to show hidden files/folders
-   * @param showAllFileTypes If true, counts all files. If false, counts only videos.
+   * @param showAllFileTypes If true, counts all files. If false, counts only media.
    * @param maxDepth Maximum recursion depth
    * @param currentDepth Current recursion depth
    * @return FolderData with counts
@@ -515,7 +413,7 @@ object FolderScanUtils {
       )
     }
 
-    var videoCount = 0
+    var mediaCount = 0
     var totalSize = 0L
     var hasSubfolders = false
 
@@ -535,11 +433,11 @@ object FolderScanUtils {
               val shouldCount = if (showAllFileTypes) {
                 true // Count all files in file manager mode
               } else {
-                StorageScanUtils.isVideoFile(file) // Count only videos in video player mode
+                StorageScanUtils.isSupportedMediaFile(file) // Count media files
               }
 
               if (shouldCount) {
-                videoCount++
+                mediaCount++
                 totalSize += file.length()
               }
             }
@@ -554,7 +452,7 @@ object FolderScanUtils {
                 maxDepth = maxDepth,
                 currentDepth = currentDepth + 1,
               )
-              videoCount += subInfo.videoCount
+              mediaCount += subInfo.videoCount
               totalSize += subInfo.totalSize
             }
           }
@@ -567,7 +465,7 @@ object FolderScanUtils {
     return FolderData(
       path = folder.absolutePath,
       name = folder.name,
-      videoCount = videoCount,
+      videoCount = mediaCount,
       totalSize = totalSize,
       totalDuration = 0L, // Duration not calculated in counting mode
       lastModified = folder.lastModified() / 1000,
@@ -586,7 +484,7 @@ object FolderScanUtils {
     showHiddenFiles: Boolean,
     showAllFileTypes: Boolean = false,
   ): FolderData {
-    var videoCount = 0
+    var mediaCount = 0
     var totalSize = 0L
     var hasSubfolders = false
 
@@ -612,20 +510,20 @@ object FolderScanUtils {
                 maxDepth = 10,
                 currentDepth = 0,
               )
-              videoCount += subInfo.videoCount
+              mediaCount += subInfo.videoCount
               totalSize += subInfo.totalSize
             }
 
-            // Count files (videos only or all files based on mode)
+            // Count files (media only or all files based on mode)
             file.isFile -> {
               val shouldCount = if (showAllFileTypes) {
                 true // Count all files in file manager mode
               } else {
-                StorageScanUtils.isVideoFile(file) // Count only videos in video player mode
+                StorageScanUtils.isSupportedMediaFile(file) // Count media files
               }
 
               if (shouldCount) {
-                videoCount++
+                mediaCount++
                 totalSize += file.length()
               }
             }
@@ -639,7 +537,7 @@ object FolderScanUtils {
     return FolderData(
       path = folder.absolutePath,
       name = folder.name,
-      videoCount = videoCount,
+      videoCount = mediaCount,
       totalSize = totalSize,
       totalDuration = 0L,
       lastModified = folder.lastModified() / 1000,
@@ -654,7 +552,7 @@ object FolderScanUtils {
    *
    * @param folder Folder to analyze
    * @param showHiddenFiles Whether to show hidden files/folders
-   * @param showAllFileTypes If true, counts all files. If false, counts only videos.
+   * @param showAllFileTypes If true, counts all files. If false, counts only media.
    * @return FolderData with immediate children count and subfolder detection
    */
   fun getDirectChildrenCountFast(
@@ -662,7 +560,7 @@ object FolderScanUtils {
     showHiddenFiles: Boolean,
     showAllFileTypes: Boolean = false,
   ): FolderData {
-    var videoCount = 0
+    var mediaCount = 0
     var totalSize = 0L
     var hasSubfolders = false
 
@@ -688,11 +586,11 @@ object FolderScanUtils {
               val shouldCount = if (showAllFileTypes) {
                 true // Count all files in file manager mode
               } else {
-                StorageScanUtils.isVideoFile(file) // Count only videos in video player mode
+                StorageScanUtils.isSupportedMediaFile(file) // Count media files
               }
 
               if (shouldCount) {
-                videoCount++
+                mediaCount++
                 totalSize += file.length()
               }
             }
@@ -706,7 +604,7 @@ object FolderScanUtils {
     return FolderData(
       path = folder.absolutePath,
       name = folder.name,
-      videoCount = videoCount,
+      videoCount = mediaCount,
       totalSize = totalSize,
       totalDuration = 0L,
       lastModified = folder.lastModified() / 1000,

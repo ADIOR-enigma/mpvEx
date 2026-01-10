@@ -116,7 +116,7 @@ fun FolderCard(
         ) {
           Icon(
             customIcon ?: Icons.Filled.Folder,
-            contentDescription = "Folder",
+            contentDescription = "Playlist",
             modifier = Modifier.size(56.dp),
             tint = MaterialTheme.colorScheme.secondary,
           )
@@ -155,7 +155,7 @@ fun FolderCard(
 
         if (showTotalVideosChip && folder.videoCount > 0) {
           Text(
-            if (folder.videoCount == 1) "1 Video" else "${folder.videoCount} Videos",
+            if (folder.videoCount == 1) "1 Item" else "${folder.videoCount} Items",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme. onSurfaceVariant,
           )
@@ -186,7 +186,7 @@ fun FolderCard(
         ) {
           Icon(
             customIcon ?: Icons.Filled.Folder,
-            contentDescription = "Folder",
+            contentDescription = "Playlist",
             modifier = Modifier.size(48.dp),
             tint = MaterialTheme.colorScheme.secondary,
           )
@@ -247,7 +247,7 @@ fun FolderCard(
           // Hide chips at storage root level (when videoCount is 0)
             if (showTotalVideosChip && folder.videoCount > 0) {
               Text(
-                if (folder.videoCount == 1) "1 Video" else "${folder.videoCount} Videos",
+                if (folder.videoCount == 1) "1 Item" else "${folder.videoCount} Items",
                 style = MaterialTheme.typography.labelSmall,
                 modifier =
                   Modifier

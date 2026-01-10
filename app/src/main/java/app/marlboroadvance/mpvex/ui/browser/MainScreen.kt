@@ -2,6 +2,7 @@ package app.marlboroadvance.mpvex.ui.browser
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -57,10 +58,8 @@ import androidx.compose.ui.unit.dp
 import app.marlboroadvance.mpvex.database.repository.PlaylistRepository
 import app.marlboroadvance.mpvex.presentation.Screen
 import app.marlboroadvance.mpvex.ui.browser.fab.MediaActionFab
-import app.marlboroadvance.mpvex.ui.browser.fab.PlaylistActionFab
 import app.marlboroadvance.mpvex.ui.browser.folderlist.FolderListScreen
 import app.marlboroadvance.mpvex.ui.browser.networkstreaming.NetworkStreamingScreen
-import app.marlboroadvance.mpvex.ui.browser.playlist.PlaylistScreen
 import app.marlboroadvance.mpvex.ui.browser.recentlyplayed.RecentlyPlayedScreen
 import app.marlboroadvance.mpvex.ui.browser.selection.SelectionManager
 import app.marlboroadvance.mpvex.ui.browser.sheets.PlayLinkSheet
@@ -175,8 +174,6 @@ object MainScreen : Screen {
     val foldersGridState = rememberLazyGridState()
     val recentListState = rememberLazyListState()
     val recentGridState = rememberLazyGridState()
-    val playlistListState = rememberLazyListState()
-    val playlistGridState = rememberLazyGridState()
     val networkListState = rememberLazyListState()
     val networkGridState = rememberLazyGridState()
     
@@ -184,8 +181,7 @@ object MainScreen : Screen {
     val currentListState = when (selectedTab) {
         0 -> foldersListState
         1 -> recentListState
-        2 -> playlistListState
-        3 -> networkListState
+        2 -> networkListState
         else -> foldersListState
     }
     
@@ -193,8 +189,7 @@ object MainScreen : Screen {
     val currentGridState = when (selectedTab) {
         0 -> foldersGridState
         1 -> recentGridState
-        2 -> playlistGridState
-        3 -> networkGridState
+        2 -> networkGridState
         else -> foldersGridState
     }
     
@@ -261,17 +256,15 @@ object MainScreen : Screen {
     }
 
     // Define items for the navigation bar
-    val items = listOf("Folders", "Recent", "Playlist", "Network")
+    val items = listOf("Playlists", "Recent", "Network")
     val selectedIcons = listOf(
         Icons.Filled.Folder, 
         Icons.Filled.History,
-        Icons.AutoMirrored.Filled.PlaylistPlay,
         Icons.Filled.Wifi
     )
     val unselectedIcons = listOf(
         Icons.Outlined.Folder, 
         Icons.Outlined.History,
-        Icons.AutoMirrored.Outlined.PlaylistPlay,
         Icons.Outlined.Wifi
     )
 
@@ -304,9 +297,9 @@ object MainScreen : Screen {
         }
       },
       floatingActionButton = {
-        // Only show FAB when not in selection mode, not on Network tab (index 3), and permission is granted
-        // For Folders tab (0), also check storage permission directly
-        val shouldShowFab = !isInSelectionMode.value && selectedTab != 3 && 
+        // Only show FAB when not in selection mode, not on Network tab (index 2), and permission is granted
+        // For Playlists tab (0), also check storage permission directly
+        val shouldShowFab = !isInSelectionMode.value && selectedTab != 2 && 
                            (selectedTab != 0 || currentHasPermission)
         if (shouldShowFab) {
           AnimatedVisibility(
@@ -316,7 +309,7 @@ object MainScreen : Screen {
           ) {
             // Show different FAB content based on selected tab
             when (selectedTab) {
-              // Folders tab (0)
+              // Playlists tab (0)
               0 -> {
                 MediaActionFab(
                   listState = currentListState,
@@ -341,6 +334,8 @@ object MainScreen : Screen {
                     }
                   },
                   onPlayLink = { showLinkDialog.value = true },
+                  onCreatePlaylist = { showCreatePlaylistDialog.value = true },
+                  onAddM3UPlaylist = { showM3UPlaylistDialog.value = true },
                   expanded = fabMenuExpanded,
                   onExpandedChange = { fabMenuExpanded = it },
                   modifier = Modifier,
@@ -378,20 +373,7 @@ object MainScreen : Screen {
                 )
               }
               
-              // Playlist tab (2)
-              2 -> {
-                PlaylistActionFab(
-                  listState = currentListState,
-                  gridState = currentGridState, // Add grid state
-                  onCreatePlaylist = { showCreatePlaylistDialog.value = true },
-                  onAddM3UPlaylist = { showM3UPlaylistDialog.value = true },
-                  expanded = fabMenuExpanded,
-                  onExpandedChange = { fabMenuExpanded = it },
-                  modifier = Modifier,
-                )
-              }
-              
-              // Network tab (3) - No FAB for this tab
+              // Network tab (2) - No FAB for this tab
               else -> { /* No FAB for Network tab */ }
             }
           }
@@ -419,14 +401,6 @@ object MainScreen : Screen {
           }
           2 -> {
             CompositionLocalProvider(
-              LocalLazyListState provides playlistListState,
-              LocalLazyGridState provides playlistGridState
-            ) {
-              PlaylistScreen.Content()
-            }
-          }
-          3 -> {
-            CompositionLocalProvider(
               LocalLazyListState provides networkListState,
               LocalLazyGridState provides networkGridState
             ) {
@@ -452,16 +426,16 @@ object MainScreen : Screen {
               coroutineScope.launch {
                 try {
                   playlistRepository.createPlaylist(name)
-                  android.widget.Toast.makeText(
+                  Toast.makeText(
                     context,
                     "Playlist created successfully",
-                    android.widget.Toast.LENGTH_SHORT
+                    Toast.LENGTH_SHORT
                   ).show()
                 } catch (e: Exception) {
-                  android.widget.Toast.makeText(
+                  Toast.makeText(
                     context,
                     "Failed to create playlist: ${e.message}",
-                    android.widget.Toast.LENGTH_LONG
+                    Toast.LENGTH_LONG
                   ).show()
                 }
                 showCreatePlaylistDialog.value = false
@@ -478,16 +452,16 @@ object MainScreen : Screen {
               coroutineScope.launch {
                 val result = playlistRepository.createM3UPlaylist(url)
                 result.onSuccess {
-                  android.widget.Toast.makeText(
+                  Toast.makeText(
                     context,
                     "M3U Playlist added successfully",
-                    android.widget.Toast.LENGTH_SHORT
+                    Toast.LENGTH_SHORT
                   ).show()
                 }.onFailure { error ->
-                  android.widget.Toast.makeText(
+                  Toast.makeText(
                     context,
                     "Failed to add M3U playlist: ${error.message}",
-                    android.widget.Toast.LENGTH_LONG
+                    Toast.LENGTH_LONG
                   ).show()
                 }
                 showM3UPlaylistDialog.value = false
@@ -497,16 +471,16 @@ object MainScreen : Screen {
               coroutineScope.launch {
                 val result = playlistRepository.createM3UPlaylistFromFile(context, uri)
                 result.onSuccess {
-                  android.widget.Toast.makeText(
+                  Toast.makeText(
                     context,
                     "M3U Playlist added successfully",
-                    android.widget.Toast.LENGTH_SHORT
+                    Toast.LENGTH_SHORT
                   ).show()
                 }.onFailure { error ->
-                  android.widget.Toast.makeText(
+                  Toast.makeText(
                     context,
                     "Failed to add M3U playlist: ${error.message}",
-                    android.widget.Toast.LENGTH_LONG
+                    Toast.LENGTH_LONG
                   ).show()
                 }
                 showM3UPlaylistDialog.value = false

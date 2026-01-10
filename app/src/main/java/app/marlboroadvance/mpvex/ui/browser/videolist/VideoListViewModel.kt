@@ -75,15 +75,15 @@ class VideoListViewModel(
   private fun loadVideos() {
     viewModelScope.launch(Dispatchers.IO) {
       try {
-        // First attempt to load videos
+        // First attempt to load videos/audio
         val videoList = MediaFileRepository.getVideosInFolder(getApplication(), bucketId)
 
         // Check if folder became empty after having videos
         if (previousVideoCount > 0 && videoList.isEmpty()) {
           _videosWereDeletedOrMoved.value = true
-          Log.d(tag, "Folder became empty (had $previousVideoCount videos before)")
+          Log.d(tag, "Folder became empty (had $previousVideoCount items before)")
         } else if (videoList.isNotEmpty()) {
-          // Reset flag if folder now has videos
+          // Reset flag if folder now has items
           _videosWereDeletedOrMoved.value = false
         }
 
@@ -91,7 +91,7 @@ class VideoListViewModel(
         previousVideoCount = videoList.size
 
         if (videoList.isEmpty()) {
-          Log.d(tag, "No videos found for bucket $bucketId - attempting media rescan")
+          Log.d(tag, "No items found for bucket $bucketId - attempting media rescan")
           triggerMediaScan()
           delay(1000)
           val retryVideoList = MediaFileRepository.getVideosInFolder(getApplication(), bucketId)
@@ -111,7 +111,7 @@ class VideoListViewModel(
           loadPlaybackInfo(videoList)
         }
       } catch (e: Exception) {
-        Log.e(tag, "Error loading videos for bucket $bucketId", e)
+        Log.e(tag, "Error loading items for bucket $bucketId", e)
         _videos.value = emptyList()
         _videosWithPlaybackInfo.value = emptyList()
       } finally {
@@ -169,7 +169,7 @@ class VideoListViewModel(
       android.media.MediaScannerConnection.scanFile(
         getApplication(),
         arrayOf(externalStorage.absolutePath),
-        arrayOf("video/*"),
+        arrayOf("video/*", "audio/*"),
       ) { path, uri ->
         Log.d(tag, "Media scan completed for: $path -> $uri")
       }

@@ -28,10 +28,18 @@ import androidx.compose.material.icons.filled.Title
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.filled.ViewModule
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.foundation.layout.Row
+import androidx.compose.ui.Alignment
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -43,7 +51,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -61,6 +69,7 @@ import app.marlboroadvance.mpvex.preferences.MediaLayoutMode
 import app.marlboroadvance.mpvex.preferences.PlayerPreferences
 import app.marlboroadvance.mpvex.preferences.SortOrder
 import app.marlboroadvance.mpvex.preferences.VideoSortType
+import app.marlboroadvance.mpvex.preferences.AudioPreferences
 import app.marlboroadvance.mpvex.preferences.preference.collectAsState
 import app.marlboroadvance.mpvex.presentation.Screen
 import app.marlboroadvance.mpvex.presentation.components.pullrefresh.PullRefreshBox
@@ -106,6 +115,8 @@ data class VideoListScreen(
     val backstack = LocalBackStack.current
     val browserPreferences = koinInject<BrowserPreferences>()
     val playerPreferences = koinInject<PlayerPreferences>()
+    val audioPreferences = koinInject<AudioPreferences>()
+    val backgroundPlayback by audioPreferences.automaticBackgroundPlayback.collectAsState()
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
 
     // ViewModel
@@ -216,6 +227,31 @@ data class VideoListScreen(
           onSelectAll = { selectionManager.selectAll() },
           onInvertSelection = { selectionManager.invertSelection() },
           onDeselectAll = { selectionManager.clear() },
+          additionalActions = {
+            var showMenu by remember { mutableStateOf(false) }
+            IconButton(onClick = { showMenu = true }) {
+              Icon(imageVector = Icons.Default.MoreVert, contentDescription = "More")
+            }
+            DropdownMenu(
+              expanded = showMenu,
+              onDismissRequest = { showMenu = false }
+            ) {
+              DropdownMenuItem(
+                text = {
+                  Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                      checked = backgroundPlayback,
+                      onCheckedChange = { audioPreferences.automaticBackgroundPlayback.set(it) }
+                    )
+                    Text("Background Playback")
+                  }
+                },
+                onClick = {
+                  audioPreferences.automaticBackgroundPlayback.set(!backgroundPlayback)
+                }
+              )
+            }
+          }
         )
       },
       bottomBar = {
@@ -277,7 +313,7 @@ data class VideoListScreen(
         isOpen = deleteDialogOpen.value,
         onDismiss = { deleteDialogOpen.value = false },
         onConfirm = { selectionManager.deleteSelected() },
-        itemType = "video",
+        itemType = "item",
         itemCount = selectionManager.selectedCount,
       )
 
@@ -371,7 +407,7 @@ data class VideoListScreen(
           text = {
             Text(
               text =
-                "Successfully moved ${privateSpaceMovedCount.intValue} video(s) to private space.\n\n" +
+                "Successfully moved ${privateSpaceMovedCount.intValue} item(s) to private space.\n\n" +
                   "To access private space, long press on the app name at the top of the main screen.",
               style = MaterialTheme.typography.bodyMedium,
             )
@@ -462,8 +498,8 @@ private fun VideoListContent(
       ) {
         EmptyState(
           icon = Icons.Filled.VideoLibrary,
-          title = "No videos in this folder",
-          message = "Videos you add to this folder will appear here",
+          title = "No items in this playlist",
+          message = "Items you add to this playlist will appear here",
         )
       }
     }
@@ -515,13 +551,6 @@ private fun VideoListContent(
           rememberedListOffset.intValue = listState.firstVisibleItemScrollOffset
       }
       
-      LaunchedEffect(gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset) {
-          rememberedGridIndex.intValue = gridState.firstVisibleItemIndex
-          rememberedGridOffset.intValue = gridState.firstVisibleItemScrollOffset
-      }
-      
-      val coroutineScope = rememberCoroutineScope()
-
       val isAtTop by remember {
         derivedStateOf {
           if (mediaLayoutMode == MediaLayoutMode.GRID) {
@@ -667,7 +696,7 @@ private fun VideoSortDialog(
 
   val folderGridColumnSelector = if (mediaLayoutMode == MediaLayoutMode.GRID) {
     GridColumnSelector(
-      label = "Folder Grid Columns",
+      label = "Playlist Grid Columns",
       currentValue = folderGridColumns,
       onValueChange = { browserPreferences.folderGridColumns.set(it) },
       valueRange = 2f..4f,
@@ -720,7 +749,7 @@ private fun VideoSortDialog(
     },
     viewModeSelector = ViewModeSelector(
       label = "View Mode",
-      firstOptionLabel = "Folder",
+      firstOptionLabel = "Playlist",
       secondOptionLabel = "Tree",
       firstOptionIcon = Icons.Filled.ViewModule,
       secondOptionIcon = Icons.Filled.AccountTree,
